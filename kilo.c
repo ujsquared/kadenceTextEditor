@@ -10,6 +10,7 @@
 #include<stdio.h>
 #include<stdlib.h>
 /*defines*/
+#define KILO_VERSION "0.0.1"
 #define CTRL_KEY(k) ((k) & 0x1f)
 /*** data ***/
 struct editorConfig{
@@ -108,20 +109,39 @@ void abFree(struct abuf *ab){
 void editorDrawRows(struct abuf *ab){
     int y;
     for(y = 0; y<E.screenrows; y++){
+        if (y == E.screenrows / 3){
+            char welcome[80];
+            int welcomelen = snprintf(welcome, sizeof(welcome),
+                    "Kilo editor -- versions %s",KILO_VERSION);
+            if(welcomelen > E.screencols) welcomelen = E.screencols;
+            int padding = (E.screencols - welcomelen) / 2;
+            if(padding) {
+                abAppend(ab,"=", 1);
+                padding--;
+            }
+            while(padding--) abAppend(ab," ", 1);
+            abAppend(ab, welcome, welcomelen);
+        } else{
         abAppend(ab, "=", 1);
-        if(y < E.screenrows - 1){
-            abAppend(ab, "\r\n", 2);
+        //if(y == E.screenrows - 1){
+        //    abAppend(ab,"This definitely be the last line ig?",37);
         }
+        abAppend(ab, "\x1b[K", 3);
+        if(y < E.screenrows - 1){
+            abAppend(ab, "\n", 2); // what the fuck does the slash r do????? it literally gives the same results overalllllllllllllll
+        }
+        
     }
 }
 void editorRefreshScreen(){ 
     struct abuf ab = ABUF_INIT;
-    abAppend(&ab, "\x1b[2J", 4);
+    abAppend(&ab, "\x1b[?25l", 6); // turning off the visibility of the cursor
     abAppend(&ab, "\x1b[H", 3);
     
     editorDrawRows(&ab);
     abAppend(&ab, "\x1b[H", 3);
-    abAppend(&ab, " Ujjwal Kala Samjha Kya bidhu", 30);/* it comes out to be 30 as there are 29 characters and last character is ending character so ek byte uski */
+    //abAppend(&ab, " Ujjwal Kala Samjha Kya bidhu", 30);/* it comes out to be 30 as there are 29 characters and last character is ending character so ek byte uski */
+    abAppend(&ab, "\x1b[?25h", 6); // turning on the visibility of the cursor
 
     write(STDOUT_FILENO, ab.b, ab.len);
     abFree(&ab);
