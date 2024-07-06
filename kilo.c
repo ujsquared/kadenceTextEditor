@@ -11,9 +11,11 @@
 #include<stdlib.h>
 /*defines*/
 #define KILO_VERSION "0.0.1"
+
 #define CTRL_KEY(k) ((k) & 0x1f)
 /*** data ***/
 struct editorConfig{
+    int cx,cy;
     int screenrows;
     int screencols;
     struct termios orig_termios;
@@ -51,7 +53,26 @@ char editorReadKey(){
     while((nread = read(STDIN_FILENO, &c, 1)) != 1){
         if(nread == -1 && errno != EAGAIN) die("read");
     }
+    if( c == '\x1b'){
+        char seq[3];
+        
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+        
+        if(seq[0] == '['){
+            switch(seq[1]){
+                case 'A': return 'w';
+                case 'B': return 's';
+                case 'C': return 'd';
+                case 'D': return 'a'; 
+            // here case ABCD represents up,down right left respectively due to escape sequence in VT100 terminals being coded
+            // that way.
+            }
+        }
+        return '\x1b';
+    } else{
     return c;
+    }
 }
 int getCursorPosition(int *rows, int *cols){
     char buf[32];
@@ -106,6 +127,8 @@ void abFree(struct abuf *ab){
 }
 
 /* output */
+// existence of a function named drawRows symmetrically implies existence of functionnamed DrawColumns, add it
+// Make it a box boys 
 void editorDrawRows(struct abuf *ab){
     int y;
     for(y = 0; y<E.screenrows; y++){
@@ -140,6 +163,9 @@ void editorRefreshScreen(){
     
     editorDrawRows(&ab);
     abAppend(&ab, "\x1b[H", 3);
+    char buf[32];
+    snprintf(buf, sizeof(buf),"\x1b[%d;%dH" ,E.cy+1,E.cx+1 );//
+    abAppend(&ab, buf, strlen(buf));
     //abAppend(&ab, " Ujjwal Kala Samjha Kya bidhu", 30);/* it comes out to be 30 as there are 29 characters and last character is ending character so ek byte uski */
     abAppend(&ab, "\x1b[?25h", 6); // turning on the visibility of the cursor
 
@@ -147,6 +173,22 @@ void editorRefreshScreen(){
     abFree(&ab);
 }
 /*input */
+void editorMoveCursor(char key){
+    switch(key){
+        case 'a':
+            E.cx--;
+            break;
+        case 's':
+            E.cy++;
+            break;
+        case 'd':
+            E.cx++;
+            break;
+        case 'w':
+            E.cy--;
+            break;
+    }
+}
 void editorProcessKeypress(){
     char c = editorReadKey();
     switch(c){
@@ -155,10 +197,18 @@ void editorProcessKeypress(){
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
             break;
+        case 'w':
+        case 's':
+        case 'a':
+        case 'd':
+            editorMoveCursor(c);
+            break;
     }
 }
 /*** init ***/
 void initEditor(){
+    E.cx = 10;
+    E.cy = 10;
     if(getWindowsSize(&E.screenrows, &E.screencols ) == -1) die("getWindowSize");
 }
 int main(){
