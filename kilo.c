@@ -1,4 +1,11 @@
 /*** includes ***/
+// these defines are put in the includes part of the code 
+// because this is actually gcc feature, including these defines
+// defines the exact features one would like to use during compilation
+#define _DEFAULT_SOURCE
+#define _BSD_SOURCE
+#define _GNU_SOURCE
+#include<sys/types.h>
 #include <asm-generic/ioctls.h>
 #include <errno.h>
 #include <errno.h>
@@ -9,6 +16,8 @@
 #include<termios.h>
 #include<stdio.h>
 #include<stdlib.h>
+// i can't make a vertical text editor cuz, the way buffer is printed out
+// is always horizontal </3 :(
 /*defines*/
 #define KILO_VERSION "0.0.1"
 
@@ -26,16 +35,23 @@ enum editorKey{
     DEL_KEY
 };
 /*** data ***/
+typedef struct erow{
+    int size;
+    char *chars;
+} erow;
+
 struct editorConfig{
     int cx,cy;
+    int rowoff;
     int screenrows;
     int screencols;
+    int numrows;
+    erow *row;
     struct termios orig_termios;
 };
 // one important thing to note down, we have not handled the case of cursor going out of bounds, 
 // in that case when the cursor crosses the boundary the terminal sets is back to 1,1/0,0 screenrows,col position
 // this is done by the terminal emulator im guessing, might be wrong later (next part is handling that case)
-//
 struct editorConfig E;
 /***terminal***/
 void die(const char *s){
@@ -144,6 +160,35 @@ int getWindowsSize(int *rows, int *cols){
         return 0;
     }
 }
+/*row operations */
+void editorAppendRow( char *s,size_t len){
+    E.row = realloc(E.row, sizeof(erow)* (E.numrows+1));
+
+    int at = E.numrows;
+    E.row[at].size = len;
+    E.row[at].chars = malloc(len+1);
+    memcpy(E.row[at].chars, s, len);
+    E.row[at].chars[len] = '\0';
+    E.numrows++;
+}
+/*file input/output */
+void editorOpen(char *filename){
+    FILE *fp = fopen(filename, "r");
+    if(!fp) die("fopen");
+
+    char *line = NULL;
+    size_t linecap = 0;
+    ssize_t linelen;
+    linelen = getline(&line, &linecap, fp);
+    while ((linelen  = getline(&line, &linecap, fp)) != -1){
+        while(linelen > 0 && (line[linelen-1] == '\n' ||
+                    line[linelen - 1] == '\r'))
+            linelen--;
+        editorAppendRow(line, linelen);
+    }
+    free(line);
+    fclose(fp);
+}
 /*append buffer */
 // this section creates functions to implement the functionality of dynamic strings to our program
 // this is important because instead of using multiple write function which may cause flicker issue, we will use single write 
@@ -173,7 +218,9 @@ void abFree(struct abuf *ab){
 void editorDrawRows(struct abuf *ab){
     int y;
     for(y = 0; y<E.screenrows; y++){
-        if (y == E.screenrows / 3){
+        int filerow = y + E.rowoff;
+        if(filerow >= E.numrows){
+        if (E.numrows == 0 && y == E.screenrows / 3){
             char welcome[80];
             int welcomelen = snprintf(welcome, sizeof(welcome),
                     "Kilo editor -- versions %s",KILO_VERSION);
@@ -187,8 +234,11 @@ void editorDrawRows(struct abuf *ab){
             abAppend(ab, welcome, welcomelen);
         } else{
         abAppend(ab, "=", 1);
-        //if(y == E.screenrows - 1){
-        //    abAppend(ab,"This definitely be the last line ig?",37);
+        }
+        } else{
+            int len = E.row[filerow].size;
+            if(len > E.screencols) len  = E.screencols;
+            abAppend(ab, E.row[filerow].chars, len);
         }
         abAppend(ab, "\x1b[K", 3);
         if(y < E.screenrows - 1){
@@ -196,7 +246,7 @@ void editorDrawRows(struct abuf *ab){
         }
         
     }
-}
+       }
 void editorRefreshScreen(){ 
     struct abuf ab = ABUF_INIT;
     abAppend(&ab, "\x1b[?25l", 6); // turning off the visibility of the cursor
@@ -270,12 +320,19 @@ void editorProcessKeypress(){
 void initEditor(){
     E.cx = 10;
     E.cy = 10;
+    E.rowoff = 0;
+    E.numrows = 0;
+    E.row = NULL;
+
     if(getWindowsSize(&E.screenrows, &E.screencols ) == -1) die("getWindowSize");
+
 }
-int main(){
+int main(int argc, char *argv[]){
     enableRawMode();
     initEditor();
-    char c;
+    if (argc >=2){
+        editorOpen(argv[1]);
+    }
     while(1){
         editorRefreshScreen(); 
         editorProcessKeypress();
