@@ -43,15 +43,13 @@ typedef struct erow{
 struct editorConfig{
     int cx,cy;
     int rowoff;
+    int coloff;
     int screenrows;
     int screencols;
     int numrows;
     erow *row;
     struct termios orig_termios;
 };
-// one important thing to note down, we have not handled the case of cursor going out of bounds, 
-// in that case when the cursor crosses the boundary the terminal sets is back to 1,1/0,0 screenrows,col position
-// this is done by the terminal emulator im guessing, might be wrong later (next part is handling that case)
 struct editorConfig E;
 /***terminal***/
 void die(const char *s){
@@ -215,6 +213,20 @@ void abFree(struct abuf *ab){
 /* output */
 // existence of a function named drawRows symmetrically implies existence of functionnamed DrawColumns, add it
 // Make it a box boys 
+void editorScroll(){
+    if(E.cy < E.rowoff){
+        E.rowoff = E.cy;
+    }
+    if(E.cy >= E.rowoff + E.screenrows){
+        E.rowoff = E.cy - E.screenrows  + 1;
+    }
+    if(E.cx <  E.coloff){
+        E.coloff = E.cx;
+    }
+    if(E.cx >= E.coloff + E.screencols){
+        E.coloff = E.cx - E.screencols + 1; 
+    }
+}
 void editorDrawRows(struct abuf *ab){
     int y;
     for(y = 0; y<E.screenrows; y++){
@@ -236,9 +248,10 @@ void editorDrawRows(struct abuf *ab){
         abAppend(ab, "=", 1);
         }
         } else{
-            int len = E.row[filerow].size;
+            int len = E.row[filerow].size - E.coloff;
+            if(len < 0 ) len = 0;
             if(len > E.screencols) len  = E.screencols;
-            abAppend(ab, E.row[filerow].chars, len);
+            abAppend(ab, &E.row[filerow].chars[E.coloff], len);
         }
         abAppend(ab, "\x1b[K", 3);
         if(y < E.screenrows - 1){
@@ -248,6 +261,7 @@ void editorDrawRows(struct abuf *ab){
     }
        }
 void editorRefreshScreen(){ 
+    editorScroll();
     struct abuf ab = ABUF_INIT;
     abAppend(&ab, "\x1b[?25l", 6); // turning off the visibility of the cursor
     abAppend(&ab, "\x1b[H", 3);
@@ -255,7 +269,7 @@ void editorRefreshScreen(){
     editorDrawRows(&ab);
     abAppend(&ab, "\x1b[H", 3);
     char buf[32];
-    snprintf(buf, sizeof(buf),"\x1b[%d;%dH" ,E.cy+1,E.cx+1 );//
+    snprintf(buf, sizeof(buf),"\x1b[%d;%dH" ,(E.cy-E.rowoff)+1,(E.cx - E.coloff)+1 );//
     abAppend(&ab, buf, strlen(buf));
     //abAppend(&ab, " Ujjwal Kala Samjha Kya bidhu", 30);/* it comes out to be 30 as there are 29 characters and last character is ending character so ek byte uski */
     abAppend(&ab, "\x1b[?25h", 6); // turning on the visibility of the cursor
@@ -265,19 +279,37 @@ void editorRefreshScreen(){
 }
 /*input */
 void editorMoveCursor(int key){
+    erow *row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
     switch(key){
         case ARROW_LEFT:
             if(E.cx!=0) E.cx--;
+            else if (E.cy > 0){
+                E.cy--;
+                E.cx = E.row[E.cy].size;
+            }
+             ;
             break;
         case ARROW_DOWN:
-            if(E.cy != E.screenrows-1) E.cy++;
+            if(E.cy  < E.numrows) E.cy++;
             break;
         case ARROW_RIGHT:
-            if(E.cx != E.screencols-1) E.cx++;
-            break;
+             if (row && E.cx < row -> size){
+             E.cx++;
+             }else if (row && E.cx == row->size) {
+                E.cy++;
+                E.cx = 0;
+             }
+             break;
         case ARROW_UP:
             if(E.cy != 0) E.cy--;
             break;
+    }// one thing we haven't implemented yet is text based movement of cursor
+     // jaise vim mei up down krne pe the cursor remember where it left the line(col)
+     // waise abhi ni banaaya par kya krskte lets see
+    row = (E.cy >= E.numrows) ? NULL : &E.row[E.cy];
+    int rowlen = row ? row->size : 0;
+    if(E.cx > rowlen){
+        E.cx = rowlen;
     }
 }
 void editorProcessKeypress(){
@@ -320,7 +352,8 @@ void editorProcessKeypress(){
 void initEditor(){
     E.cx = 10;
     E.cy = 10;
-    E.rowoff = 0;
+    E.coloff = 2;
+    E.rowoff = 2;
     E.numrows = 0;
     E.row = NULL;
 
