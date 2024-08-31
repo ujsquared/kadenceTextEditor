@@ -273,7 +273,7 @@ void editorDrawRows(struct abuf *ab){
         }
         abAppend(ab, "\x1b[K", 3);
         if(y < E.screenrows - 1){
-            abAppend(ab, "\n", 2); // what the fuck does the slash r do????? it literally gives the same results overalllllllllllllll
+            abAppend(ab, "\n", 2); //  
         }
         
     }
@@ -289,7 +289,7 @@ void editorRefreshScreen(){
     char buf[32];
     snprintf(buf, sizeof(buf),"\x1b[%d;%dH" ,(E.cy-E.rowoff)+1,(E.cx - E.coloff)+1 );//
     abAppend(&ab, buf, strlen(buf));
-    //abAppend(&ab, " Ujjwal Kala Samjha Kya bidhu", 30);/* it comes out to be 30 as there are 29 characters and last character is ending character so ek byte uski */
+    //abAppend(&ab, "check", 30);/* it comes out to be 30 as there are 29 characters and last character is ending character so ek byte uski */
     abAppend(&ab, "\x1b[?25h", 6); // turning on the visibility of the cursor
 
     write(STDOUT_FILENO, ab.b, ab.len);
@@ -390,3 +390,4 @@ int main(int argc, char *argv[]){
     }
     return 0;
 }
+//
