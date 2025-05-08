@@ -2,6 +2,8 @@
 // these defines are put in the includes part of the code 
 // because this is actually gcc feature, including these defines
 // defines the exact features one would like to use during compilation
+#include <stdarg.h>
+#include <time.h>
 #define _DEFAULT_SOURCE
 #define _BSD_SOURCE
 #define _GNU_SOURCE
@@ -10,6 +12,7 @@
 #include <errno.h>
 #include <errno.h>
 #include<unistd.h>
+#include<time.h>
 #include<errno.h>
 #include<sys/ioctl.h>
 #include<string.h>
@@ -20,7 +23,7 @@
 // is always horizontal </3 :(
 /*defines*/
 #define KADENCE_VERSION "0.0.1"
-
+#define KILO_TAB_STOP 8
 #define CTRL_KEY(k) ((k) & 0x1f)
 
 enum editorKey{
@@ -44,12 +47,16 @@ typedef struct erow{
 
 struct editorConfig{
     int cx,cy;
+    int rx;
     int rowoff;
     int coloff;
     int screenrows;
     int screencols;
     int numrows;
     erow *row;
+    char *filename;
+    char statusmsg[80];
+    time_t statusmsg_time;
     struct termios orig_termios;
 };
 struct editorConfig E;
@@ -63,6 +70,20 @@ void die(const char *s){
 void disableRawMode(){
     if(tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1)
         die("tcsetattr");
+}
+void loggingText(const char *format, const char *mode, ...){
+    FILE *fptr;
+    fptr = fopen("log.txt", mode);
+    if (fptr == NULL){
+        printf("Error!");
+        exit(1);
+    }
+    va_list args;
+    va_start(args, mode);
+
+    vfprintf(fptr, format, args);
+    va_end(args);
+    fclose(fptr);
 }
 void enableRawMode(){
     if(tcgetattr(STDIN_FILENO, &E.orig_termios) == -1) die("tcgetattr"); 
@@ -101,8 +122,6 @@ int editorReadKey(){
                         case '3': return DEL_KEY;
                         case '5': return PAGE_UP;
                         case '6': return PAGE_DOWN;
-                        case '7': return HOME_KEY;
-                        case '8': return END_KEY;
                     }
                 }
             }
@@ -161,17 +180,40 @@ int getWindowsSize(int *rows, int *cols){
     }
 }
 /*row operations */
+int editorRowCxtoRx(erow *row, int cx){
+    int rx = 0;
+    int j = 0; // kya bhai C99 users ; ( 
+    for(j = 0; j < cx; j++){
+        if(row->chars[j] == '\t'){
+           rx += (KILO_TAB_STOP-1) - (rx%KILO_TAB_STOP); 
+        }
+        rx++;
+    }
+    return rx;
+}
 void editorUpdateRow(erow *row){
-    free(row->render);
-    row->render = malloc(row->size + 1);
+    int tabs = 0;
     int j;
+    for(j = 0; j  < row->size; j++){
+        if(row->chars[j] == '\t') tabs++;
+    }
+    free(row->render);
+    row->render = malloc(row->size + tabs*(KILO_TAB_STOP - 1)+ 1);
+
     int idx = 0;
-    for ( j = 0; j < row->size ; j++){
-        row->render[idx++] = row->chars[j];
+    for (j = 0; j < row->size; j++){
+        if (row->chars[j] == '\n'){
+            row->render[idx++] = ' ';
+            while(idx % KILO_TAB_STOP != 0) row->render[idx++] = ' ';
+        }
+        else{
+            row->render[idx++] = row->chars[j]; 
+        }
     }
     row->render[idx] = '\0';
-    row->rsize = idx;
+    row->rsize = idx; 
 }
+/*file input/output */
 void editorAppendRow( char *s,size_t len){
     E.row = realloc(E.row, sizeof(erow)* (E.numrows+1));
 
@@ -183,27 +225,46 @@ void editorAppendRow( char *s,size_t len){
     
     E.row[at].rsize = 0;
     E.row[at].render = NULL;
+    editorUpdateRow(&E.row[at]);
 
     E.numrows++;
 }
-/*file input/output */
-void editorOpen(char *filename){
-    FILE *fp = fopen(filename, "r");
-    if(!fp) die("fopen");
+void editorRowInsertChar(erow *row, int at, int c){
+    if(at < 0 || at > row->size) at = row->size; // idk why at < 0 was chosen
+    row->chars = realloc(row->chars, row->size + 2);
+    memmove(&row->chars[at+1], &row->chars[at], row->size - at + 1);
+    row->size++;
+    row->chars[at] = c;
+    editorUpdateRow(row);
+    loggingText("updated %c \n", "a", c );
+}
+/*editor operations*/
 
-    char *line = NULL;
-    size_t linecap = 0;
-    ssize_t linelen;
-    linelen = getline(&line, &linecap, fp);
-    while ((linelen  = getline(&line, &linecap, fp)) != -1){
-        while(linelen > 0 && (line[linelen-1] == '\n' ||
-                    line[linelen - 1] == '\r')){
-            linelen--;
-            editorAppendRow(line, linelen);
-        }
-    }
-    free(line);
-    fclose(fp);
+void editorInsertChar(int c){
+   if(E.cy == E.numrows){
+       editorAppendRow("", 0 );
+   } 
+   editorRowInsertChar(&E.row[E.cy], E.cx, 1);
+   E.cx++;
+}
+void editorOpen(char *filename) {
+  free(E.filename);
+  E.filename = filename; // used to be strdup(filename)
+
+  FILE *fp = fopen(filename, "r");
+  if (!fp) die("fopen");
+
+  char *line = NULL;
+  size_t linecap = 0;
+  ssize_t linelen;
+  while ((linelen = getline(&line, &linecap, fp)) != -1) {
+    while (linelen > 0 && (line[linelen - 1] == '\n' ||
+                           line[linelen - 1] == '\r'))
+      linelen--;
+    editorAppendRow(line, linelen);
+  }
+  free(line);
+  fclose(fp);
 }
 /*append buffer */
 // this section creates functions to implement the functionality of dynamic strings to our program
@@ -232,17 +293,21 @@ void abFree(struct abuf *ab){
 // existence of a function named drawRows symmetrically implies existence of functionnamed DrawColumns, add it
 // Make it a box boys 
 void editorScroll(){
+    E.rx = 0;
+    if(E.cy < E.numrows){
+        E.rx = editorRowCxtoRx(&E.row[E.cy], E.cx);
+    }
     if(E.cy < E.rowoff){
         E.rowoff = E.cy;
     }
     if(E.cy >= E.rowoff + E.screenrows){
         E.rowoff = E.cy - E.screenrows  + 1;
     }
-    if(E.cx <  E.coloff){
+    if(E.rx <  E.coloff){
         E.coloff = E.cx;
     }
-    if(E.cx >= E.coloff + E.screencols){
-        E.coloff = E.cx - E.screencols + 1; 
+    if(E.rx >= E.coloff + E.screencols){
+        E.coloff = E.rx - E.screencols + 1; 
     }
 }
 void editorDrawRows(struct abuf *ab){
@@ -272,12 +337,41 @@ void editorDrawRows(struct abuf *ab){
             abAppend(ab, &E.row[filerow].chars[E.coloff], len);
         }
         abAppend(ab, "\x1b[K", 3);
-        if(y < E.screenrows - 1){
-            abAppend(ab, "\n", 2); //  
-        }
-        
+        abAppend(ab, "\r\n", 2); //  
     }
-       }
+}
+void editorDrawStatusBar(struct abuf *ab){
+    abAppend(ab, "\x1b[7m", 4);
+    char* string = "hi";
+    char status[80], rstatus[80];
+    // loggingText("%s","w", "start"); 
+    int len = snprintf(status, sizeof(status), "%.20s - %d lines",E.filename ? E.filename : "[No Name]", E.numrows);
+    int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
+    // int len = snprintf(status, sizeof(status), "%.20s - %d lines", E.filename ? E.filename : "[No Name]", E.numrows);
+    // int rlen = snprintf(rstatus, sizeof(rstatus), "%d/%d", E.cy + 1, E.numrows);
+    if(len > E.screencols) len = E.screencols;
+    abAppend(ab, status, len);
+    int counter = 0;
+    // loggingText("w", "start \n ");
+    while(len < E.screencols){
+        // loggingText("a", "enters the while counter = %d\n", counter++);
+        if(E.screencols - len == rlen){
+            abAppend(ab, rstatus, rlen);
+            break;
+        }else{
+        abAppend(ab, " ", 1);
+        len++;
+        }
+    }
+    abAppend(ab,"\x1b[m", 3);
+}
+void editorDrawMessageBar(struct abuf *ab){
+    abAppend(ab, "\x1b[K", 3);
+    int msglen = strlen(E.statusmsg);
+    if(msglen > E.screencols) msglen = E.screencols;
+    if(msglen && time(NULL) - E.statusmsg_time < 5) // checks if msglen is not 0 and if the time elapsed is less than 5 seconds
+        abAppend(ab, E.statusmsg, msglen);
+}
 void editorRefreshScreen(){ 
     editorScroll();
     struct abuf ab = ABUF_INIT;
@@ -285,15 +379,26 @@ void editorRefreshScreen(){
     abAppend(&ab, "\x1b[H", 3);
     
     editorDrawRows(&ab);
+    editorDrawStatusBar(&ab); // <- is present in the error stack!
+    editorDrawMessageBar(&ab);
+
     abAppend(&ab, "\x1b[H", 3);
     char buf[32];
-    snprintf(buf, sizeof(buf),"\x1b[%d;%dH" ,(E.cy-E.rowoff)+1,(E.cx - E.coloff)+1 );//
+    snprintf(buf, sizeof(buf),"\x1b[%d;%dH" ,(E.cy-E.rowoff)+1,(E.rx - E.coloff)+1 );//
     abAppend(&ab, buf, strlen(buf));
     //abAppend(&ab, "check", 30);/* it comes out to be 30 as there are 29 characters and last character is ending character so ek byte uski */
     abAppend(&ab, "\x1b[?25h", 6); // turning on the visibility of the cursor
 
     write(STDOUT_FILENO, ab.b, ab.len);
     abFree(&ab);
+}
+
+void editorSetStatusMessage(const char *fmt, ...){
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(E.statusmsg, sizeof(E.statusmsg), fmt, ap);
+    va_end(ap);
+    E.statusmsg_time = time(NULL);
 }
 /*input */
 void editorMoveCursor(int key){
@@ -338,6 +443,13 @@ void editorProcessKeypress(){
             write(STDOUT_FILENO, "\x1b[H", 3);
             exit(0);
             break;
+        case HOME_KEY:
+            E.cx = 0;
+            break;
+        case END_KEY: //for some reason it is not working : (
+            if (E.cy < E.numrows)
+                E.cx = E.row[E.cy].size;
+            break;
         case PAGE_UP:
             //PAGE UP and PAGE DOWN both are handled in pagedown, using crazy ass ternary operator
         case PAGE_DOWN:
@@ -352,11 +464,8 @@ void editorProcessKeypress(){
         case ARROW_RIGHT:
             editorMoveCursor(c);
             break;
-        case HOME_KEY:
-            E.cx = 0;
-            break;
-        case END_KEY:
-            E.cx = E.screenrows - 1;
+        default:
+            editorInsertChar(c);
             break;
     // clever part incoming------------
     // so instead of making home and key move one by one
@@ -370,22 +479,29 @@ void editorProcessKeypress(){
 void initEditor(){
     E.cx = 0;
     E.cy = 0;
+    E.rx = 0;
     E.coloff = 2;
     E.rowoff = 2;
     E.numrows = 0;
     E.row = NULL;
+    E.filename = NULL;
+    E.statusmsg[0] = '\0';
+    E.statusmsg_time = 0;
 
     if(getWindowsSize(&E.screenrows, &E.screencols ) == -1) die("getWindowSize");
+    E.screenrows -=2;
 
 }
 int main(int argc, char *argv[]){
     enableRawMode();
     initEditor();
+    loggingText("myself logger sir\n", "w");
     if (argc >= 2){
         editorOpen(argv[1]);
     }
+    editorSetStatusMessage("HELP: Ctrl-C = quit");
     while(1){
-        editorRefreshScreen(); 
+        editorRefreshScreen();  // <--- this line must be present in the Error Stack 
         editorProcessKeypress();
     }
     return 0;
